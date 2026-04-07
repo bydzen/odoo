@@ -1,0 +1,92 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+DB_NAME="${ODOO_DB:-flexyos_odoo}"
+
+create_backup() {
+    local timestamp backup_dir
+    timestamp="$(date +%Y%m%d_%H%M%S)"
+    backup_dir="$SCRIPT_DIR/backup/$timestamp"
+
+    mkdir -p "$backup_dir"
+
+    echo "Creating backup at: $backup_dir"
+    echo "- Backing up db_data..."
+    tar czf "$backup_dir/db_data.tgz" -C "$SCRIPT_DIR" db_data
+
+    echo "- Backing up Odoo filestore (odoo_data volume)..."
+    docker compose run --rm -T web sh -c 'tar czf - -C /var/lib/odoo .' > "$backup_dir/odoo_data.tgz"
+
+    echo "Backup complete: $backup_dir"
+}
+
+case "$1" in
+    start)      docker desktop start ;;
+    up)         docker compose up -d ;;
+    down)       docker compose down ;;
+    stop)       docker compose stop ;;
+    restart)    docker compose restart web ;;
+    logs)       docker compose logs -f web ;;
+    ps)         docker compose ps ;;
+    build)      docker compose build ;;
+    shell)      docker compose exec web odoo shell -d "$DB_NAME" ;;
+    update|upgrade)
+                if [ -z "$2" ]; then
+                    echo "Usage: ./odoo.sh update <module_name|all> [db_name]"
+                    echo "       ./odoo.sh upgrade <module_name|all> [db_name]"
+                    echo "       ODOO_DB=<db_name> ./odoo.sh upgrade <module_name|all>"
+                    exit 1
+                fi
+                target_db="${3:-$DB_NAME}"
+                if [ "$2" = "all" ]; then
+                    echo "Updating all installed modules on DB: $target_db"
+                else
+                    echo "Updating module: $2 on DB: $target_db"
+                fi
+                docker compose exec web odoo -u "$2" -d "$target_db" --stop-after-init
+                docker compose restart web
+                ;;
+    backup)
+                echo "Stopping containers for consistent backup..."
+                docker compose down
+                create_backup
+                echo "Starting stack again..."
+                docker compose up -d
+                ;;
+    reset)
+                if [ "$2" != "--yes" ]; then
+                    echo "This will permanently delete all DB data and Odoo filestore."
+                    echo "A backup will be created first in ./backup/<timestamp>/"
+                    echo "Run with: ./odoo.sh reset --yes"
+                    exit 1
+                fi
+
+                echo "Stopping containers..."
+                docker compose down
+
+                create_backup
+
+                echo "Cleaning bind-mounted PostgreSQL data (db_data)..."
+                rm -rf ./db_data/*
+
+                echo "Removing Odoo filestore volume (odoo_data)..."
+                docker compose down -v
+
+                echo "Starting fresh stack..."
+                docker compose up -d
+
+                echo "Done. Open Odoo and create a new database."
+                ;;
+    *)
+                echo "Usage: $0 {up|down|stop|restart|logs|ps|build|shell|update|upgrade|backup|reset}"
+                echo "       $0 update <module_name|all> [db_name]"
+                echo "       $0 upgrade <module_name|all> [db_name]"
+                echo "       ODOO_DB=<db_name> $0 shell|update|upgrade ..."
+                echo "       $0 backup"
+                echo "       $0 reset --yes"
+                exit 1
+esac
