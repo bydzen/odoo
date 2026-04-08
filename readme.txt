@@ -4,7 +4,7 @@ How to Install on Linux Machine
 
 Steps:
 1. Clone this repository:
-	git clone https://github.com/<your-username>/odoo.git
+	git clone https://github.com/bydzen/odoo.git
 2. Enter the directory:
 	cd odoo/
 3. Copy main file to binary:
@@ -16,7 +16,6 @@ Usage:
 odoo [command]
 
 Commands:
-  start                    Start Docker Desktop
   up                       Start containers in background
   down                     Stop and remove containers
   stop                     Stop containers
@@ -27,8 +26,8 @@ Commands:
   shell                    Open Odoo shell
   update <module|all>      Upgrade module(s) and restart web
   upgrade <module|all>     Same as update
-  backup                   Backup db_data and filestore
-  reset --yes              Backup then wipe DB + filestore
+  backup                   Backup data/ directory and filestore
+  reset --yes              Backup then wipe data/ directory
 
 Optional:
   ODOO_DB=<db_name> odoo shell

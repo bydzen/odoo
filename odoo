@@ -5,40 +5,60 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-DB_NAME="${ODOO_DB:-flexyos_odoo}"
+DOCKER_COMPOSE="docker compose"
+
+DB_NAME="${ODOO_DB:-odoo}"
+
+DATA_DIR="$SCRIPT_DIR/data"
+DB_DATA_DIR="$DATA_DIR/postgres"
+ODOO_DATA_DIR="$DATA_DIR/odoo"
 
 create_backup() {
-    local timestamp backup_dir
+    local timestamp backup_root
     timestamp="$(date +%Y%m%d_%H%M%S)"
-    backup_dir="$SCRIPT_DIR/backup/$timestamp"
+    backup_root="$SCRIPT_DIR/backup/$timestamp"
 
-    mkdir -p "$backup_dir"
+    mkdir -p "$backup_root"
 
-    echo "Creating backup at: $backup_dir"
-    echo "- Backing up db_data..."
-    tar czf "$backup_dir/db_data.tgz" -C "$SCRIPT_DIR" db_data
+    echo "Creating backup at: $backup_root"
+    
+    if [ -d "$DB_DATA_DIR" ]; then
+        echo "- Backing up PostgreSQL data..."
+        tar czf "$backup_root/postgres_data.tgz" -C "$DATA_DIR" postgres
+    fi
 
-    echo "- Backing up Odoo filestore (odoo_data volume)..."
-    docker compose run --rm -T web sh -c 'tar czf - -C /var/lib/odoo .' > "$backup_dir/odoo_data.tgz"
+    if [ -d "$ODOO_DATA_DIR" ]; then
+        echo "- Backing up Odoo filestore..."
+        tar czf "$backup_root/odoo_data.tgz" -C "$DATA_DIR" odoo
+    fi
 
-    echo "Backup complete: $backup_dir"
+    echo "Backup complete: $backup_root"
 }
 
 case "$1" in
-    start)      docker desktop start ;;
-    up)         docker compose up -d ;;
-    down)       docker compose down ;;
-    stop)       docker compose stop ;;
-    restart)    docker compose restart web ;;
-    logs)       docker compose logs -f web ;;
-    ps)         docker compose ps ;;
-    build)      docker compose build ;;
-    shell)      docker compose exec web odoo shell -d "$DB_NAME" ;;
+    up)
+                mkdir -p data/odoo data/postgres
+                
+                if [ "$(stat -c '%u' data/odoo)" != "101" ]; then
+                    sudo chown -R 101:101 data/odoo 2>/dev/null || echo "Warning: You may need to run 'sudo chown -R 101:101 data/odoo' manually."
+                fi
+                if [ "$(stat -c '%u' data/postgres)" != "999" ]; then
+                    sudo chown -R 999:999 data/postgres 2>/dev/null || echo "Warning: You may need to run 'sudo chown -R 999:999 data/postgres' manually."
+                fi
+
+                $DOCKER_COMPOSE up -d ;;
+    down)       $DOCKER_COMPOSE down ;;
+    stop)       $DOCKER_COMPOSE stop ;;
+    restart)    $DOCKER_COMPOSE restart web ;;
+    logs)       $DOCKER_COMPOSE logs -f web ;;
+    ps)         $DOCKER_COMPOSE ps ;;
+    build)      $DOCKER_COMPOSE build ;;
+    shell)      $DOCKER_COMPOSE exec web odoo shell -d "$DB_NAME" ;;
     update|upgrade)
                 if [ -z "$2" ]; then
-                    echo "Usage: ./odoo.sh update <module_name|all> [db_name]"
-                    echo "       ./odoo.sh upgrade <module_name|all> [db_name]"
-                    echo "       ODOO_DB=<db_name> ./odoo.sh upgrade <module_name|all>"
+                    echo "Usage: $0 update <module_name|all> [db_name]"
+                    echo "       $0 upgrade <module_name|all> [db_name]"
+                    echo "       ODOO_DB=<db_name> $0 upgrade <module_name|all>"
                     exit 1
                 fi
                 target_db="${3:-$DB_NAME}"
@@ -47,37 +67,37 @@ case "$1" in
                 else
                     echo "Updating module: $2 on DB: $target_db"
                 fi
-                docker compose exec web odoo -u "$2" -d "$target_db" --stop-after-init
-                docker compose restart web
+                $DOCKER_COMPOSE exec web odoo -u "$2" -d "$target_db" --stop-after-init
+                $DOCKER_COMPOSE restart web
                 ;;
     backup)
                 echo "Stopping containers for consistent backup..."
-                docker compose down
+                $DOCKER_COMPOSE down
                 create_backup
                 echo "Starting stack again..."
-                docker compose up -d
+                $DOCKER_COMPOSE up -d
                 ;;
     reset)
                 if [ "$2" != "--yes" ]; then
                     echo "This will permanently delete all DB data and Odoo filestore."
                     echo "A backup will be created first in ./backup/<timestamp>/"
-                    echo "Run with: ./odoo.sh reset --yes"
+                    echo "Run with: $0 reset --yes"
                     exit 1
                 fi
 
                 echo "Stopping containers..."
-                docker compose down
+                $DOCKER_COMPOSE down
 
                 create_backup
 
-                echo "Cleaning bind-mounted PostgreSQL data (db_data)..."
-                rm -rf ./db_data/*
+                echo "Cleaning data directories..."
+                rm -rf "$DB_DATA_DIR"/*
+                rm -rf "$ODOO_DATA_DIR"/*
 
-                echo "Removing Odoo filestore volume (odoo_data)..."
-                docker compose down -v
+                $DOCKER_COMPOSE down -v
 
                 echo "Starting fresh stack..."
-                docker compose up -d
+                $DOCKER_COMPOSE up -d
 
                 echo "Done. Open Odoo and create a new database."
                 ;;
